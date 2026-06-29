@@ -1,0 +1,156 @@
+﻿name: CI/CD - Build, Push y Deploy a ECS
+
+on:
+  push:
+    branches: [main]
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REGISTRY: 339712924855.dkr.ecr.us-east-1.amazonaws.com
+  ECS_CLUSTER: eval3-cluster
+
+jobs:
+  deploy-backend-py:
+    name: Deploy Backend Python
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout codigo
+        uses: actions/checkout@v4
+
+      - name: Configurar credenciales AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login a Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build y push BackendPy
+        id: build-backend-py
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t $ECR_REGISTRY/backend-py:$IMAGE_TAG ./backend-py
+          docker push $ECR_REGISTRY/backend-py:$IMAGE_TAG
+          echo "image=$ECR_REGISTRY/backend-py:$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+      - name: Descargar task definition
+        run: |
+          aws ecs describe-task-definition --task-definition backend-py-task --query taskDefinition > backend-py-task.json
+
+      - name: Actualizar imagen
+        id: task-def-py
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: backend-py-task.json
+          container-name: backend-py
+          image: ${{ steps.build-backend-py.outputs.image }}
+
+      - name: Deploy a ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition: ${{ steps.task-def-py.outputs.task-definition }}
+          service: backend-py-service
+          cluster: ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: true
+
+  deploy-backend-js:
+    name: Deploy Backend JavaScript
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout codigo
+        uses: actions/checkout@v4
+
+      - name: Configurar credenciales AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login a Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build y push BackendJS
+        id: build-backend-js
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t $ECR_REGISTRY/backend-js:$IMAGE_TAG ./backend-js
+          docker push $ECR_REGISTRY/backend-js:$IMAGE_TAG
+          echo "image=$ECR_REGISTRY/backend-js:$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+      - name: Descargar task definition
+        run: |
+          aws ecs describe-task-definition --task-definition backend-js-task --query taskDefinition > backend-js-task.json
+
+      - name: Actualizar imagen
+        id: task-def-js
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: backend-js-task.json
+          container-name: backend-js
+          image: ${{ steps.build-backend-js.outputs.image }}
+
+      - name: Deploy a ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition: ${{ steps.task-def-js.outputs.task-definition }}
+          service: backend-js-service
+          cluster: ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: true
+
+  deploy-frontend:
+    name: Deploy Frontend
+    runs-on: ubuntu-latest
+    needs: [deploy-backend-py, deploy-backend-js]
+    steps:
+      - name: Checkout codigo
+        uses: actions/checkout@v4
+
+      - name: Configurar credenciales AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login a Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build y push Frontend
+        id: build-frontend
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t $ECR_REGISTRY/frontend:$IMAGE_TAG ./frontend
+          docker push $ECR_REGISTRY/frontend:$IMAGE_TAG
+          echo "image=$ECR_REGISTRY/frontend:$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+      - name: Descargar task definition
+        run: |
+          aws ecs describe-task-definition --task-definition frontend-task --query taskDefinition > frontend-task.json
+
+      - name: Actualizar imagen
+        id: task-def-front
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: frontend-task.json
+          container-name: frontend
+          image: ${{ steps.build-frontend.outputs.image }}
+
+      - name: Deploy a ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition: ${{ steps.task-def-front.outputs.task-definition }}
+          service: frontend-service
+          cluster: ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: true
